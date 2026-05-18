@@ -115,10 +115,20 @@ export default function App() {
   );
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   const [expandedSection, setExpandedSection] = useState<string | null>('raw_observations');
+  const [error, setError] = useState<string | null>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    setError(null);
     if (file) {
+      if (!file.type.startsWith('image/')) {
+        setError('Invalid file type. Please upload an image.');
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        setError('File too large. Maximum size is 10MB.');
+        return;
+      }
       setEvidence(file);
       setPreviewUrl(URL.createObjectURL(file));
     }
@@ -134,6 +144,7 @@ export default function App() {
   const runAIAnalysis = async (sectionId: string) => {
     if (!evidence) return;
     setAnalyzing(sectionId);
+    setError(null);
     
     try {
       const formData = new FormData();
@@ -141,17 +152,27 @@ export default function App() {
       formData.append('section', sectionId);
       
       const sectionInfo = FRAMEWORK_SECTIONS.find(s => s.id === sectionId);
-      const prompt = `Perform an OSINT investigation for ${sectionInfo?.title}. 
-      Follow these rules:
-      1. Do NOT invent facts.
-      2. Carefully analyze evidence and infer only what is reasonably supported.
-      3. Section description: ${sectionInfo?.placeholder}
+      const prompt = `INVESTIGATION TASK: ${sectionInfo?.title}
       
-      Output format:
-      [OBSERVATIONS]: ...
-      [INFERENCES]: ...
-      [CONFIDENCE]: Low/Medium/High
-      [REASONING]: ...`;
+      OBJECTIVE:
+      ${sectionInfo?.placeholder}
+      
+      STRICT REQUIREMENTS:
+      1. ONLY document what is visible. Use phrases like "Possible", "Likely", or "Ambiguous" for non-certain details.
+      2. If text is blurry, identify it as "Illegible Text" but describe the shape/color if possible.
+      3. For geolocation, look for small details: electrical sockets, vegetation types, road sign fonts, driving side.
+      4. If you see misdirection, explain why.
+      
+      Strict Output Format (JSON is NOT required, use these specific markers):
+      [OBSERVATIONS]: 
+      - (Bullet points of raw findings)
+      
+      [INFERENCES]: 
+      - (What the findings suggest based on investigative logic)
+      
+      [CONFIDENCE]: (Low/Medium/High)
+      
+      [REASONING]: (Why you chose this confidence level based on the clarity of evidence)`;
 
       formData.append('prompt', prompt);
 
@@ -162,6 +183,11 @@ export default function App() {
 
       const data = await response.json();
       
+      if (data.error) {
+        setError(data.error);
+        return;
+      }
+
       if (data.analysis) {
         // Simple parsing of AI response
         const contentMatch = data.analysis.match(/\[OBSERVATIONS\]:([\s\S]*?)\[INFERENCES\]/);
@@ -170,14 +196,15 @@ export default function App() {
         const reasoningMatch = data.analysis.match(/\[REASONING\]:([\s\S]*)/);
 
         updateSection(sectionId, {
-          content: contentMatch ? contentMatch[1].trim() : data.analysis,
-          inference: inferenceMatch ? inferenceMatch[1].trim() : '',
+          content: contentMatch ? contentMatch[1].trim().replace(/^- /gm, '') : data.analysis,
+          inference: inferenceMatch ? inferenceMatch[1].trim().replace(/^- /gm, '') : '',
           confidence: (confidenceMatch ? confidenceMatch[1].trim() : 'Medium') as Confidence,
           reasoning: reasoningMatch ? reasoningMatch[1].trim() : ''
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("AI Analysis failed:", error);
+      setError("An unexpected error occurred during intelligence processing.");
     } finally {
       setAnalyzing(null);
     }
@@ -235,6 +262,20 @@ export default function App() {
               </button>
             )}
           </div>
+          
+          <AnimatePresence>
+            {error && (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }} 
+                animate={{ opacity: 1, y: 0 }} 
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="mb-4 p-3 bg-red-950/40 border border-red-900 rounded-lg flex items-start gap-3"
+              >
+                <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-red-400 font-medium">{error}</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {!evidence ? (
             <label className="flex-1 border-2 border-dashed border-slate-800 rounded-xl flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-blue-500/50 hover:bg-blue-500/5 transition-all group">
